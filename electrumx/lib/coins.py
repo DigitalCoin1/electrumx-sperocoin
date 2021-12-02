@@ -1458,6 +1458,37 @@ class DeepOnion(Coin):
         import x13_hash
         return x13_hash.getPoWHash(header)
 
+class SperoCoin(Coin):
+    NAME = "SperoCoin"
+    SHORTNAME = "SPERO"
+    NET = "mainnet"
+    P2PKH_VERBYTE = bytes.fromhex("3F")
+    P2SH_VERBYTES = [bytes.fromhex("05")]
+    WIF_BYTE = bytes.fromhex("BF")
+    GENESIS_HASH = ('000006f4925ed7b889f847f24621390d'
+                    '4943466f091c3254ca1bd8becc517f7b')
+    ESTIMATE_FEE = 0.0001
+    RELAY_FEE = 0.0001
+    DESERIALIZER = lib_tx.DeserializerTxTime
+    DAEMON = daemon.LegacyRPCDaemon
+    TX_COUNT = 1000
+    TX_COUNT_HEIGHT = 10000
+    TX_PER_BLOCK = 1
+    RPC_PORT = 55681
+    REORG_LIMIT = 200
+    XPUB_VERBYTES = bytes.fromhex("0488B21E")
+    XPRV_VERBYTES = bytes.fromhex("0488ADE4")
+    PEERS = []
+
+    @classmethod
+    def header_hash(cls, header):
+        '''
+        Given a header return the hash for SperoCoin.
+        Need to download `x13_hash` module
+        Source code: https://github.com/MaruCoinOfficial/x13-hash
+        '''
+        import x13_hash
+        return x13_hash.getPoWHash(header)
 
 class Peercoin(Coin):
     NAME = "Peercoin"
