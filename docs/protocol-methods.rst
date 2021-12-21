@@ -161,6 +161,7 @@ be confirmed within a certain number of blocks.
 **Signature**
 
   .. function:: blockchain.estimatefee(number)
+  .. deprecated:: 1.4.2
 
   *number*
 
@@ -176,7 +177,7 @@ be confirmed within a certain number of blocks.
 
 ::
 
-  0.00101079
+  0.00001
 
 
 blockchain.headers.subscribe
@@ -211,10 +212,11 @@ Subscribe to receive block headers when a new block is found.
 
 **Notifications**
 
-  As this is a subcription, the client will receive a notification
+  As this is a subscription, the client will receive a notification
   when a new block is found.  The notification's signature is:
 
     .. function:: blockchain.headers.subscribe(header)
+       :noindex:
 
     * *header*
 
@@ -241,21 +243,17 @@ be accepted to the daemon's memory pool.
 **Signature**
 
   .. function:: blockchain.relayfee()
+  .. deprecated:: 1.4.2
 
 **Result**
 
-  The fee in whole coin units (BTC, not satoshis for Bitcoin) as a
-  floating point number.
+  The fee in whole coin units as a floating point number.
 
 **Example Results**
 
 ::
 
-   1e-05
-
-::
-
-   0.0
+   0.000001
 
 blockchain.scripthash.get_balance
 =================================
@@ -275,15 +273,15 @@ Return the confirmed and unconfirmed balances of a :ref:`script hash
 **Result**
 
   A dictionary with keys `confirmed` and `unconfirmed`.  The value of
-  each is the appropriate balance in coin units as a string.
+  each is the appropriate balance in minimum coin units (satoshis).
 
 **Result Example**
 
 ::
 
   {
-    "confirmed": "1.03873966",
-    "unconfirmed": "0.236844"
+    "confirmed": 103873966,
+    "unconfirmed": 23684400
   }
 
 blockchain.scripthash.get_history
@@ -388,66 +386,6 @@ hashes>`.
     }
   ]
 
-blockchain.scripthash.history
-=============================
-
-Return part of the confirmed history of a :ref:`script hash <script
-hashes>`.
-
-**Signature**
-
-  .. function:: blockchain.scripthash.history(scripthash, start_height)
-  .. versionadded:: 1.5
-
-  *scripthash*
-
-    The script hash as a hexadecimal string.
-
-  *start_height*
-
-    History will be returned starting from this height, a non-negative
-    integer.  If there are several matching transactions in a block,
-    the server will return *all* of them -- partial results from a
-    block are not permitted.  The client can start subsequent requests
-    at one above the greatest returned height and avoid repeats.
-
-**Result**
-
-  A dictionary with the following keys.
-
-  * *more*
-
-    :const:`true` indicates that there *may* be more history
-    available.  A follow-up request is required to obtain any.
-    :const:`false` means all history to blockchain's tip has been
-    returned.
-
-  * *history*
-
-    A list ot transactions.  Each transaction is itself a list of
-    two elements:
-
-      1. The block height
-      2. The transaction hash
-
-**Result Examples**
-
-::
-
-  {
-    "more": false,
-    "history": [
-      [
-        200004,
-        "acc3758bd2a26f869fcc67d48ff30b96464d476bca82c1cd6656e7d506816412"
-      ],
-      [
-        215008,
-        "f3e1bf48975b8d6060a9de8884296abb80be618dc00ae3cb2f6cee3085e09403"
-      ]
-    ]
-  }
-
 
 blockchain.scripthash.listunspent
 =================================
@@ -526,89 +464,36 @@ Subscribe to a script hash.
 
 **Result**
 
-  .. versionchanged:: 1.5
-
-  As of protocol 1.5, the transaction hash of the last confirmed
-  transaction in blockchain order, or :const:`null` if there are none.
-
-  For protocol versions 1.4 and below, the :ref:`status <status>` of
-  the script hash.
+  The :ref:`status <status>` of the script hash.
 
 **Notifications**
 
-  .. versionchanged:: 1.5
-
-  As this is a subscription, the client receives notifications when
-  the confirmed transaction history and/or associated mempool
-  transactions change.
-
-  As of protocol 1.5, the initial mempool and subsequent changes to it
-  are sent with :func:`mempool.changes` notifications.  When confirmed
-  history changes, a notification with signature
-
-    .. function:: blockchain.scripthash.subscribe(scripthash, tx_hash)
-
-  is sent, where *tx_hash* is the hash of the last confirmed
-  transaction in blockchain order.
-
-  For protocol versions 1.4 and below, the client will receive a
-  notification when the :ref:`status <status>` of the script hash
-  changes.  Its signature is
+  The client will receive a notification when the :ref:`status <status>` of the script
+  hash changes.  Its signature is
 
     .. function:: blockchain.scripthash.subscribe(scripthash, status)
+       :noindex:
 
-blockchain.scripthash.utxos
-===========================
+blockchain.scripthash.unsubscribe
+=================================
 
-Return some confirmed UTXOs sent to a script hash.
+Unsubscribe from a script hash, preventing future notifications if its :ref:`status
+<status>` changes.
 
 **Signature**
 
-  .. function:: blockchain.scripthash.utxos(scripthash, start_height)
-  .. versionadded:: 1.5
+  .. function:: blockchain.scripthash.unsubscribe(scripthash)
+  .. versionadded:: 1.4.2
 
   *scripthash*
 
     The script hash as a hexadecimal string.
 
-  *start_height*
-
-    UTXOs will be returned starting from this height, a non-negative
-    integer.  If there are several UTXOs in one block, the server will
-    return *all* of them -- partial results from a block are not
-    permitted.  The client can start subsequent requests at one above
-    the greatest returned height and avoid repeats.
-
-.. note:: To get the effects of transactions in the mempool adding or
-   removing UTXOs, a client must
-   :func:`blockchain.scripthash.subscribe` and track mempool
-   transactions sent via :func:`mempool.changes` notifications.
-
 **Result**
 
-  A dictionary with the following keys.
-
-  * *more*
-
-    :const:`true` indicates that there *may* be more UTXOs available.
-    A follow-up request is required to obtain any.  :const:`false`
-    means all UTXOs to the blockchain's tip have been returned.
-
-  * *utxos*
-
-    A list of UTXOs.  Each UTXO is itself a list with the following
-    elements:
-
-    1. The height of the block the transaction is in
-    2. The transaction hash as a hexadecimal string
-    3. The zero-based index of the output in the transaction's outputs
-    4. The output value, an integer in minimum coin units (satoshis)
-
-**Result Example**
-
-::
-  **TODO**
-
+  Returns :const:`True` if the scripthash was subscribed to, otherwise :const:`False`.
+  Note that :const:`False` might be returned even for something subscribed to earlier,
+  because the server can drop subscriptions in rare circumstances.
 
 blockchain.transaction.broadcast
 ================================
@@ -655,13 +540,11 @@ Return a raw transaction.
 
 **Signature**
 
-  .. function:: blockchain.transaction.get(tx_hash, verbose=false, merkle=false)
+  .. function:: blockchain.transaction.get(tx_hash, verbose=false)
   .. versionchanged:: 1.1
      ignored argument *height* removed
   .. versionchanged:: 1.2
      *verbose* argument added
-  .. versionchanged:: 1.5
-     *merkle* argument added
 
   *tx_hash*
 
@@ -671,38 +554,21 @@ Return a raw transaction.
 
     Whether a verbose coin-specific response is required.
 
-  *merkle*
-
-    Whether a merkle branch proof should be returned as well.
-
 **Result**
 
     If *verbose* is :const:`false`:
 
-       If *merkle* is :const:`false`, the raw transaction as a
-       hexadecimal string.  If :const:`true`, the dictionary returned
-       by :func:`blockchain.transaction.get_merkle` with an additional
-       key:
-
-       *hex*
-
-          The raw transaction as a hexadecimal string.
+       The raw transaction as a hexadecimal string.
 
     If *verbose* is :const:`true`:
 
        The result is a coin-specific dictionary -- whatever the coin
        daemon returns when asked for a verbose form of the raw
-       transaction.  If *merkle* is :const:`true` it will have an
-       additional key:
-
-       *merkle*
-
-          The dictionary returned by
-          :func:`blockchain.transaction.get_merkle`.
+       transaction.
 
 **Example Results**
 
-When *verbose* is :const:`false` and *merkle* is :const:`false`::
+When *verbose* is :const:`false`::
 
   "01000000015bb9142c960a838329694d3fe9ba08c2a6421c5158d8f7044cb7c48006c1b48"
   "4000000006a4730440220229ea5359a63c2b83a713fcc20d8c41b20d48fe639a639d2a824"
@@ -712,7 +578,7 @@ When *verbose* is :const:`false` and *merkle* is :const:`false`::
   "4fe5f88ac50a8cf00000000001976a91445dac110239a7a3814535c15858b939211f85298"
   "88ac61ee0700"
 
-When *verbose* is :const:`true` and *merkle* is :const:`false`::
+When *verbose* is :const:`true`::
 
  {
    "blockhash": "0000000000000000015a4f37ece911e5e3549f988e855548ce7494a0a08b2ad6",
@@ -808,6 +674,90 @@ and height.
     "pos": 710
   }
 
+
+blockchain.transaction.get_tsc_merkle
+=====================================
+
+Return the TSC Bitcoin Association merkle proof in standardised format for a confirmed
+transaction given its hash and height. Additional options include: txid_or_tx and target_type.
+
+See: https://tsc.bitcoinassociation.net/standards/merkle-proof-standardised-format/
+
+**Signature**
+
+  .. function:: blockchain.transaction.get_tsc_merkle(tx_hash, height, txid_or_tx="txid", target_type="block_hash")
+
+  *tx_hash*
+
+    The transaction hash as a hexadecimal string.
+
+  *height*
+
+    The height at which it was confirmed, an integer.
+
+  *txid_or_tx*
+
+    Takes two possible values: "txid" or "tx".
+    Selects whether to return the transaction hash or the full transaction as a hexadecimal string.
+
+  *target_type*
+
+    Takes three possible values: "block_hash", "block_header", "merkle_root"
+    The selected target is returned as a hexidecimal string in the response.
+
+
+**Result**
+
+  A dictionary with the following keys:
+
+  * *composite*
+
+    Included for completeness. Whether or not this is a composite merkle proof (for two or more
+    transactions). ElectrumX does not support composite proofs at this time (always False).
+
+  * *index*
+
+    The 0-based position index of the transaction in the block.
+
+  * *nodes*
+
+    The list of hash pairs making up the merkle branch. "Duplicate" hashes (see TSC merkle proof
+    format spec.) are replaced with asterixes as they can be derived by the client.
+
+  * *proofType*
+
+    Included for completeness. Specifies the proof type as either 'branch' or 'tree' type.
+    ElectrumX only supports 'branch' proof types.
+
+  * *target*
+
+    Either the block_hash, block_header or merkle_root as a hexidecimal string.
+
+  * *targetType*
+
+    Takes three possible values: "block_hash", "block_header", "merkle_root"
+
+  * *txOrId*
+
+    Either a 32 byte tx hash or a full transaction as a hexidecimal string.
+
+**Result Example**
+
+::
+
+    {
+        'composite': False,
+        'index': 4,
+        'nodes': [
+            '*',
+            '*',
+            '80c0100bc080eb0d2e205dc687056dc13c2079d0959c70cad8856fea88c74aba'],
+        'proofType': 'branch',
+        'target': '29442cb6e2ee547fcf5200dfb1b4018f4fc5ce5a220bb5ec3729a686885692fc',
+        'targetType': 'block_hash',
+        'txOrId': 'ed5a81e439e1cd9139ddb81da80bfa7cfc31e323aea544ca92a9ee1d84b9fb2f'
+    }
+
 blockchain.transaction.id_from_pos
 ==================================
 
@@ -872,52 +822,6 @@ When *merkle* is :const:`true`::
     ]
   }
 
-mempool.changes
-===============
-
-A notification that indicates changes to unconfirmed transactions of a
-:ref:`subscribed <subscribed>` :ref:`script hash <script hashes>`.  As
-its name suggests the notification is stateful; its contents are a
-function of what was sent previously.
-
-**Signature**
-
-  .. function:: mempool.changes(scripthash, new, gone)
-  .. versionadded:: 1.5
-
-  The parameters are as follows:
-
-  * *scripthash*
-
-    The script hash the notification is for, a hexadecimal string.
-
-  * *new*
-
-    A list of transactions in the mempool that have not previously
-    been sent to the client, or whose *confirmed input* status
-    has changed.  Each transaction is an ordered list of 3 items:
-
-    1. The raw transaction or its hash as a hexadecimal string.  The
-       first time the server sends a transaction it sends it raw.
-       Subsequent references in the same *new* list or in later
-       notifications will send the hash only.  Transactions cannot be
-       32 bytes in size so length can be used to distinguish.
-    2. The transaction fee, an integer in minimum coin units (satoshis)
-    3. :const:`true` if all inputs are confirmed otherwise :const:`false`
-
-  * *gone*
-
-    A list of hashes of transactions that were previously sent to the
-    client as being in the mempool but no longer are.  Those
-    transactions presumably were confirmed in a block or were evicted
-    from the mempool.
-
-**Notification Example**
-
-::
-  **TODO**
-
-
 mempool.get_fee_histogram
 =========================
 
@@ -928,6 +832,7 @@ pool, weighted by transaction size.
 
   .. function:: mempool.get_fee_histogram()
   .. versionadded:: 1.2
+  .. deprecated:: 1.4.2
 
 **Result**
 
@@ -953,7 +858,7 @@ server.add_peer
 ===============
 
 A newly-started server uses this call to get itself into other servers'
-peers lists.  It sould not be used by wallet clients.
+peers lists.  It should not be used by wallet clients.
 
 **Signature**
 
@@ -1068,7 +973,7 @@ Return a list of features and services supported by the server.
   * *server_version*
 
     A string that identifies the server software.  Should be the same
-    as the result to the :func:`server.version` RPC call.
+    as the first element of the result to the :func:`server.version` RPC call.
 
   * *protocol_max*
   * *protocol_min*
@@ -1215,7 +1120,7 @@ validate messages from it.
 
 **Result**
 
-  :const:`true` if the message was broadcasted succesfully otherwise
+  :const:`true` if the message was broadcasted successfully otherwise
   :const:`false`.
 
 **Example**::
@@ -1247,7 +1152,7 @@ Returns the status of masternode.
 
 **Result**
 
-  As this is a subcription, the client will receive a notification
+  As this is a subscription, the client will receive a notification
   when the masternode status changes.
 
   The status depends on the server the masternode is hosted, the

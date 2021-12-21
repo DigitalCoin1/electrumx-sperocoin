@@ -128,34 +128,6 @@ def test_address_string():
     assert util.address_string(('1.2.3.4', 84)) == '1.2.3.4:84'
     assert util.address_string(('0a::23', 84)) == '[a::23]:84'
 
-def test_is_valid_hostname():
-    is_valid_hostname = util.is_valid_hostname
-    assert not is_valid_hostname('')
-    assert is_valid_hostname('a')
-    assert is_valid_hostname('_')
-    # Hyphens
-    assert not is_valid_hostname('-b')
-    assert not is_valid_hostname('a.-b')
-    assert is_valid_hostname('a-b')
-    assert not is_valid_hostname('b-')
-    assert not is_valid_hostname('b-.c')
-    # Dots
-    assert is_valid_hostname('a.')
-    assert is_valid_hostname('foo1.Foo')
-    assert not is_valid_hostname('foo1..Foo')
-    assert is_valid_hostname('12Foo.Bar.Bax_')
-    assert is_valid_hostname('12Foo.Bar.Baz_12')
-    # 63 octets in part
-    assert is_valid_hostname('a.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN'
-                             'OPQRSTUVWXYZ0123456789_.bar')
-    # Over 63 octets in part
-    assert not is_valid_hostname('a.abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMN'
-                                 'OPQRSTUVWXYZ0123456789_1.bar')
-    len255 = ('a' * 62 + '.') * 4 + 'abc'
-    assert is_valid_hostname(len255)
-    assert not is_valid_hostname(len255 + 'd')
-
-
 def test_protocol_tuple():
     assert util.protocol_tuple(None) == (0, )
     assert util.protocol_tuple("foo") == (0, )
@@ -164,7 +136,6 @@ def test_protocol_tuple():
     assert util.protocol_tuple("0.1") == (0, 1)
     assert util.protocol_tuple("0.10") == (0, 10)
     assert util.protocol_tuple("2.5.3") == (2, 5, 3)
-    assert util.protocol_tuple("11.2.33ExtraXYZ") == (11, 2, 33)
 
 def test_version_string():
     assert util.version_string(()) == "0.0"
@@ -221,8 +192,8 @@ def test_pack_varint():
 
     for n in tests:
         data = util.pack_varint(n)
-        deser = tx.Deserializer(data)
-        assert deser._read_varint() == n
+        value, size = tx.read_varint(data, 0)
+        assert value == n and size == len(data)
 
     import struct
     with pytest.raises(struct.error):
@@ -243,5 +214,5 @@ def test_pack_varbytes():
 
     for test in tests:
         data = util.pack_varbytes(test)
-        deser = tx.Deserializer(data)
-        assert deser._read_varbytes() == test
+        value, size = tx.read_varbytes(data, 0)
+        assert value == test and size == len(data)
