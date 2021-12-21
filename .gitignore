@@ -1,5 +1,6 @@
 **/__pycache__/
 .cache/
+.coverage
 .pytest_cache/
 */*~
 *.#*
@@ -10,4 +11,5 @@ docs/_build
 /dist
 /electrumx.egg-info
 .vscode/
+.mypy_cache/
 .idea/

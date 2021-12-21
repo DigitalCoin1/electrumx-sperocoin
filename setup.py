@@ -1,21 +1,21 @@
 import setuptools
-version = '1.10.0'
+import electrumx
+
+version = electrumx.version.rsplit(' ', maxsplit=1)[-1]
+
+with open('requirements.txt', 'r') as f:
+    requirements = f.read().splitlines()
 
 setuptools.setup(
     name='electrumX',
     version=version,
     scripts=['electrumx_server', 'electrumx_rpc', 'electrumx_compact_history'],
-    python_requires='>=3.6',
-    # via environment variables, in which case I've tested with 15.0.4
-    # "x11_hash" package (1.4) is required to sync DASH network.
-    # "x13_hash" package is required to sync BitcoinPlus network.
-    # "tribus_hash" package is required to sync Denarius network.
-    # "blake256" package is required to sync Decred network.
-    # "xevan_hash" package is required to sync Xuez network.
-    # "groestlcoin_hash" package is required to sync Groestlcoin network.
-    # "pycryptodomex" package is required to sync SmartCash network.
-    install_requires=['aiorpcX>=0.10.4,<0.11', 'attrs',
-                      'plyvel', 'pylru', 'aiohttp >= 2'],
+    python_requires='>=3.8',
+    install_requires=requirements,
+    extras_require={
+        'rocksdb': ['python-rocksdb>=0.6.9'],
+        'uvloop': ['uvloop>=0.14'],
+    },
     packages=setuptools.find_packages(include=('electrumx*',)),
     description='ElectrumX Server',
     author='Neil Booth',
@@ -30,7 +30,7 @@ setuptools.setup(
         'Framework :: AsyncIO',
         'License :: OSI Approved :: MIT License',
         'Operating System :: Unix',
-        "Programming Language :: Python :: 3.6",
+        "Programming Language :: Python :: 3.7",
         "Topic :: Database",
         'Topic :: Internet',
     ],
