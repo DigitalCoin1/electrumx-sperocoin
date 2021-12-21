@@ -1,27 +1,37 @@
-# Copyright (c) 2017-2021, Neil Booth
+# Copyright (c) 2017-2018, Neil Booth
 #
 # All rights reserved.
 #
-# This file is licensed under the Open BSV License version 3, see LICENCE for details.
+# See the file "LICENCE" for information about the copyright
+# and warranty status of this software.
 
 '''Peer management.'''
 
 import asyncio
-from ipaddress import IPv4Address, IPv6Address
 import random
 import socket
 import ssl
 import time
-from collections import defaultdict, Counter
+from collections import Counter, defaultdict
+from ipaddress import IPv4Address, IPv6Address
+from typing import TYPE_CHECKING, Type
 
-from aiorpcx import (connect_rs, RPCSession, SOCKSProxy, Notification, handler_invocation,
-                     SOCKSError, TaskTimeout, TaskGroup, Event,
-                     sleep, ignore_after, RPCError, ProtocolError)
+import aiohttp
+from aiorpcx import (Event, Notification, RPCError, RPCSession, SOCKSError,
+                     SOCKSProxy, TaskGroup, TaskTimeout, connect_rs,
+                     handler_invocation, ignore_after, sleep)
+from aiorpcx.jsonrpc import CodeMessageError
 
 from electrumx.lib.peer import Peer
-from electrumx.lib.util import class_logger
+from electrumx.lib.util import class_logger, json_deserialize
+
+if TYPE_CHECKING:
+    from electrumx.server.env import Env
+    from electrumx.server.db import DB
+
 
 PEER_GOOD, PEER_STALE, PEER_NEVER, PEER_BAD = range(4)
+STATUS_DESCS = ('good', 'stale', 'never', 'bad')
 STALE_SECS = 3 * 3600
 WAKEUP_SECS = 300
 PEER_ADD_PAUSE = 600
@@ -42,8 +52,8 @@ class PeerSession(RPCSession):
 
     async def handle_request(self, request):
         # We subscribe so might be unlucky enough to get a notification...
-        if (isinstance(request, Notification)
-                and request.method == 'blockchain.headers.subscribe'):
+        if (isinstance(request, Notification) and
+                request.method == 'blockchain.headers.subscribe'):
             pass
         else:
             await handler_invocation(None, request)   # Raises
@@ -55,7 +65,7 @@ class PeerManager:
     Attempts to maintain a connection with up to 8 peers.
     Issues a 'peers.subscribe' RPC to them and tells them our data.
     '''
-    def __init__(self, env, db):
+    def __init__(self, env: 'Env', db: 'DB'):
         self.logger = class_logger(__name__, self.__class__.__name__)
         # Initialise the Peer class
         Peer.DEFAULT_PORTS = env.coin.PEER_DEFAULT_PORTS
@@ -76,6 +86,8 @@ class PeerManager:
         self.proxy = None
         self.group = TaskGroup()
         self.recent_peer_adds = {}
+        # refreshed
+        self.blacklist = set()
 
     def _my_clearnet_peer(self):
         '''Returns the clearnet peer representing this server, if any.'''
@@ -129,11 +141,42 @@ class PeerManager:
                                   for real_name in self.env.coin.PEERS)
         await self._note_peers(imported_peers, limit=None)
 
+    async def _refresh_blacklist(self):
+        url = self.env.blacklist_url
+        if not url:
+            return
+
+        async def read_blacklist():
+            async with aiohttp.ClientSession() as session:
+                async with session.get(url) as response:
+                    text = await response.text()
+            return {entry.lower() for entry in json_deserialize(text)}
+
+        while True:
+            try:
+                self.blacklist = await read_blacklist()
+            except Exception as e:
+                self.logger.error(f'could not retrieve blacklist from {url}: {e}')
+            else:
+                self.logger.info(f'blacklist from {url} has {len(self.blacklist)} entries')
+                # Got new blacklist. Now check our current peers against it
+                for peer in self.peers:
+                    if self._is_blacklisted(peer):
+                        peer.retry_event.set()
+            await sleep(600)
+
+    def _is_blacklisted(self, peer):
+        host = peer.host.lower()
+        second_level_domain = '*.' + '.'.join(host.split('.')[-2:])
+        return any(item in self.blacklist
+                   for item in (host, second_level_domain, peer.ip_addr))
+
     def _get_recent_good_peers(self):
         cutoff = time.time() - STALE_SECS
         recent = [peer for peer in self.peers
-                  if peer.last_good > cutoff
-                  and not peer.bad and peer.is_public]
+                  if peer.last_good > cutoff and
+                  not peer.bad and peer.is_public]
+        recent = [peer for peer in recent if not self._is_blacklisted(peer)]
         return recent
 
     async def _detect_proxy(self):
@@ -250,7 +293,7 @@ class PeerManager:
                 self.logger.error(f'{peer_text} marking bad: ({e})')
                 peer.mark_bad()
                 break
-            except (RPCError, ProtocolError) as e:
+            except CodeMessageError as e:
                 self.logger.error(f'{peer_text} RPC error: {e.message} '
                                   f'({e.code})')
             except (OSError, SOCKSError, ConnectionError, TaskTimeout) as e:
@@ -299,6 +342,9 @@ class PeerManager:
             if isinstance(address.host, (IPv4Address, IPv6Address)):
                 peer.ip_addr = str(address.host)
 
+        if self._is_blacklisted(peer):
+            raise BadPeerError('blacklisted')
+
         # Bucket good recent peers; forbid many servers from similar IPs
         # FIXME there's a race here, when verifying multiple peers
         #       that belong to the same bucket ~simultaneously
@@ -324,7 +370,10 @@ class PeerManager:
 
         # server.version goes first
         message = 'server.version'
-        result = await session.send_request(message, self.server_version_args)
+        try:
+            result = await session.send_request(message, self.server_version_args)
+        except asyncio.CancelledError:
+            raise BadPeerError('terminated before server.version response')
 
         assert_good(message, result, list)
 
@@ -341,10 +390,6 @@ class PeerManager:
             peers_task = await g.spawn(self._send_peers_subscribe
                                        (session, peer))
 
-            async for task in g:
-                if not task.cancelled():
-                    task.result()
-
         # Process reported peers if remote peer is good
         peers = peers_task.result()
         await self._note_peers(peers)
@@ -353,14 +398,17 @@ class PeerManager:
         if features:
             self.logger.info(f'registering ourself with {peer}')
             # We only care to wait for the response
-            await session.send_request('server.add_peer', [features])
+            try:
+                await session.send_request('server.add_peer', [features])
+            except asyncio.CancelledError:
+                raise BadPeerError('terminated before server.add_peer response')
 
     async def _send_headers_subscribe(self, session):
         message = 'blockchain.headers.subscribe'
         result = await session.send_request(message)
         assert_good(message, result, dict)
 
-        our_height = self.db.state.height
+        our_height = self.db.db_height
         their_height = result.get('height')
         if not isinstance(their_height, int):
             raise BadPeerError(f'invalid height {their_height}')
@@ -405,7 +453,7 @@ class PeerManager:
             return [Peer.from_real_name(real_name, str(peer))
                     for real_name in real_names]
         except Exception:
-            raise BadPeerError('bad server.peers.subscribe response') from None
+            raise BadPeerError('bad server.peers.subscribe response')
 
     #
     # External interface
@@ -425,14 +473,11 @@ class PeerManager:
         self.logger.info(f'announce ourself: {self.env.peer_announce}')
         self.logger.info(f'my clearnet self: {self._my_clearnet_peer()}')
         self.logger.info(f'force use of proxy: {self.env.force_proxy}')
-        self.logger.info('beginning peer discovery...')
+        self.logger.info(f'beginning peer discovery...')
         async with self.group as group:
+            await group.spawn(self._refresh_blacklist())
             await group.spawn(self._detect_proxy())
             await group.spawn(self._import_peers())
-
-            async for task in group:
-                if not task.cancelled():
-                    task.result()
 
     def info(self):
         '''The number of peers.'''
@@ -512,8 +557,11 @@ class PeerManager:
 
         # Always report ourselves if valid (even if not public)
         cutoff = time.time() - STALE_SECS
-        peers = set(myself for myself in self.myselves
-                    if myself.last_good > cutoff)
+        peers = {
+            myself
+            for myself in self.myselves
+            if myself.last_good > cutoff
+        }
 
         # Bucket the clearnet peers and select up to two from each
         onion_peers = []
@@ -543,14 +591,13 @@ class PeerManager:
     def rpc_data(self):
         '''Peer data for the peers RPC method.'''
         self._set_peer_statuses()
-        descs = ['good', 'stale', 'never', 'bad']
 
         def peer_data(peer):
             data = peer.serialize()
-            data['status'] = descs[peer.status]
+            data['status'] = STATUS_DESCS[peer.status]
             return data
 
         def peer_key(peer):
-            return (peer.bad, -peer.last_good)
+            return peer.bad, -peer.last_good
 
         return [peer_data(peer) for peer in sorted(self.peers, key=peer_key)]

@@ -1,8 +1,27 @@
-# Copyright (c) 2017-2021, Neil Booth
+# Copyright (c) 2016-2017, Neil Booth
 #
 # All rights reserved.
 #
-# This file is licensed under the Open BSV License version 3, see LICENCE for details.
+# The MIT License (MIT)
+#
+# Permission is hereby granted, free of charge, to any person obtaining
+# a copy of this software and associated documentation files (the
+# "Software"), to deal in the Software without restriction, including
+# without limitation the rights to use, copy, modify, merge, publish,
+# distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so, subject to
+# the following conditions:
+#
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 '''Cryptograph hash functions and related classes.'''
 
@@ -14,20 +33,13 @@ from electrumx.lib.util import bytes_to_int, int_to_bytes, hex_to_bytes
 
 _sha256 = hashlib.sha256
 _new_hash = hashlib.new
-_new_hmac = hmac.new
+_hmac_digest = hmac.digest
 HASHX_LEN = 11
 
 
 def sha256(x):
     '''Simple wrapper of hashlib sha256.'''
     return _sha256(x).digest()
-
-
-def ripemd160(x):
-    '''Simple wrapper of hashlib ripemd160.'''
-    h = _new_hash('ripemd160')
-    h.update(x)
-    return h.digest()
 
 
 def double_sha256(x):
@@ -52,7 +64,7 @@ class Base58Error(Exception):
     '''Exception used for Base58 errors.'''
 
 
-class Base58(object):
+class Base58:
     '''Class providing base 58 functionality.'''
 
     chars = '123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz'
@@ -63,7 +75,7 @@ class Base58(object):
     def char_value(c):
         val = Base58.cmap.get(c)
         if val is None:
-            raise Base58Error('invalid base 58 character "{}"'.format(c))
+            raise Base58Error(f'invalid base 58 character "{c}"')
         return val
 
     @staticmethod
@@ -116,7 +128,7 @@ class Base58(object):
         be_bytes = Base58.decode(txt)
         result, check = be_bytes[:-4], be_bytes[-4:]
         if check != hash_fn(result)[:4]:
-            raise Base58Error('invalid base 58 checksum for {}'.format(txt))
+            raise Base58Error(f'invalid base 58 checksum for {txt}')
         return result
 
     @staticmethod

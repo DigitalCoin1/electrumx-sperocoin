@@ -2,58 +2,6 @@
  ChangeLog
 ===========
 
-.. note:: you **must** add the following line to your bitcoin.conf file::
-
-      rest=1
-
-   I strongly recommend also adding::
-
-      rpcservertimeout=120
-
-   If you see messages in your logs about truncated messages whilst syncing, you may need to
-   increase the timeout (in seconds) further.
-
-Version 1.20.0 (21 Oct 2021)
-============================
-
-* get blocks via the REST API from bitcoind, and process them incrementally and in a separate
-  thread
-* support for TSC merkle proofs (AustEcon)
-* sockets tweak (rt1212121)
-
-
-Version 1.19.0 (11 Jun 2021)
-============================
-
-* disconnect excessive resource usage sessions faster (SomberNight)
-* better handling of task groups to reduce memory usage and report errors properly
-* add MAX_RECV environment variable defaulting to 5 million bytes
-
-
-Version 1.18.1 (26 Apr 2021)
-============================
-
-* Fix unclean and stalled shutdowns
-* Cleanup lock handling
-* Process blocks one at a time
-* Remove dead code
-
-
-Version 1.17.0 (04 Feb 2021)
-============================
-
-* Fix a couple of issues raised by pylint
-
-
-Version 1.16.0 (03 Feb 2021)
-============================
-
-* Require Python 3.8.
-* Bitcoin only (BSV).
-* Disable resource limits for private sessions (ghost43).
-* Various bug fixes (jtarthur, ghost43) particularly in peer discovery.
-* other: AustEcon, Roger Taylor, Franco Benner
-
 
 Version 1.15.0 (27 May 2020)
 ============================

@@ -15,9 +15,7 @@
 import os
 import sys
 sys.path.insert(0, os.path.abspath('..'))
-
-from electrumx import version
-
+VERSION="ElectrumX 1.15.0"
 
 # -- Project information -----------------------------------------------------
 
@@ -26,9 +24,9 @@ copyright = '2016-2020, Neil Booth'
 author = 'Neil Booth'
 
 # The full version including branding
-release = version
+release = VERSION
 # The short X.Y version
-version = version.split()[-1]
+version = VERSION.split()[-1]
 
 
 # -- General configuration ---------------------------------------------------

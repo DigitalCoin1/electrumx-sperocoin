@@ -7,21 +7,19 @@ from electrumx.lib.util import subclasses
 # Find out which db engines to test
 # Those that are not installed will be skipped
 db_engines = []
-for klass in subclasses(Storage):
+for c in subclasses(Storage):
     try:
-        klass.import_module()
+        c.import_module()
     except ImportError:
-        db_engines.append("skip")
+        db_engines.append(pytest.param(c.__name__, marks=pytest.mark.skip))
     else:
-        db_engines.append(klass.__name__)
+        db_engines.append(c.__name__)
 
 
 @pytest.fixture(params=db_engines)
 def db(tmpdir, request):
     cwd = os.getcwd()
     os.chdir(str(tmpdir))
-    if request.param is 'skip':
-        raise pytest.skip()
     db = db_class(request.param)("db", False)
     yield db
     os.chdir(cwd)

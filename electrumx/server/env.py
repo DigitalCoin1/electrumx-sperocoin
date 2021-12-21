@@ -1,14 +1,16 @@
-# Copyright (c) 2016-2021, Neil Booth
+# Copyright (c) 2016, Neil Booth
 #
 # All rights reserved.
 #
-# This file is licensed under the Open BSV License version 3, see LICENCE for details.
+# See the file "LICENCE" for information about the copyright
+# and warranty status of this software.
 
 '''Class for handling environment configuration and defaults.'''
 
 
 import re
 from ipaddress import IPv4Address, IPv6Address
+from typing import Type
 
 from aiorpcx import Service, ServicePart
 from electrumx.lib.coins import Coin
@@ -29,6 +31,8 @@ class Env(EnvBase):
     PD_OFF, PD_SELF, PD_ON = ('OFF', 'SELF', 'ON')
     SSL_PROTOCOLS = {'ssl', 'wss'}
     KNOWN_PROTOCOLS = {'ssl', 'tcp', 'ws', 'wss', 'rpc'}
+
+    coin: Type[Coin]
 
     def __init__(self, coin=None):
         super().__init__()
@@ -68,13 +72,14 @@ class Env(EnvBase):
         self.log_level = self.default('LOG_LEVEL', 'info').upper()
         self.donation_address = self.default('DONATION_ADDRESS', '')
         self.drop_client = self.custom("DROP_CLIENT", None, re.compile)
+        self.drop_client_unknown = self.boolean('DROP_CLIENT_UNKNOWN', False)
+        self.blacklist_url = self.default('BLACKLIST_URL', self.coin.BLACKLIST_URL)
         self.cache_MB = self.integer('CACHE_MB', 1200)
         self.reorg_limit = self.integer('REORG_LIMIT', self.coin.REORG_LIMIT)
 
         # Server limits to help prevent DoS
 
         self.max_send = self.integer('MAX_SEND', self.coin.DEFAULT_MAX_SEND)
-        self.max_recv = self.integer('MAX_RECV', 5_000_000)
         self.max_sessions = self.sane_max_sessions()
         self.cost_soft_limit = self.integer('COST_SOFT_LIMIT', 1000)
         self.cost_hard_limit = self.integer('COST_HARD_LIMIT', 10000)
@@ -83,6 +88,9 @@ class Env(EnvBase):
         self.request_sleep = self.integer('REQUEST_SLEEP', 2500)
         self.request_timeout = self.integer('REQUEST_TIMEOUT', 30)
         self.session_timeout = self.integer('SESSION_TIMEOUT', 600)
+        self.session_group_by_subnet_ipv4 = self.integer('SESSION_GROUP_BY_SUBNET_IPV4', 24)
+        self.session_group_by_subnet_ipv6 = self.integer('SESSION_GROUP_BY_SUBNET_IPV6', 48)
+        self._check_and_fix_cost_limits()
 
         # Services last - uses some env vars above
 
@@ -104,12 +112,25 @@ class Env(EnvBase):
             # We give the DB 250 files; allow ElectrumX 100 for itself
             value = max(0, min(env_value, nofile_limit - 350))
             if value < env_value:
-                self.logger.warning('lowered maximum sessions from {:,d} to {:,d} '
-                                    'because your open file limit is {:,d}'
-                                    .format(env_value, value, nofile_limit))
+                self.logger.warning(
+                    f'lowered maximum sessions from {env_value:,d} to '
+                    f'{value:,d} because your open file limit is '
+                    f'{nofile_limit:,d}'
+                )
         except ImportError:
             value = 512  # that is what returned by stdio's _getmaxstdio()
         return value
+
+    def _check_and_fix_cost_limits(self):
+        if self.cost_hard_limit < self.cost_soft_limit:
+            raise self.Error(f"COST_HARD_LIMIT must be >= COST_SOFT_LIMIT. "
+                             f"got (COST_HARD_LIMIT={self.cost_hard_limit} "
+                             f"and COST_SOFT_LIMIT={self.cost_soft_limit})")
+        # hard limit should be strictly higher than soft limit (unless both are 0)
+        if self.cost_hard_limit == self.cost_soft_limit and self.cost_soft_limit > 0:
+            self.logger.info("found COST_HARD_LIMIT == COST_SOFT_LIMIT. "
+                             "bumping COST_HARD_LIMIT by 1.")
+            self.cost_hard_limit = self.cost_soft_limit + 1
 
     def _parse_services(self, services_str, default_func):
         result = []
@@ -158,8 +179,8 @@ class Env(EnvBase):
                 raise ServiceError(f'bad protocol for REPORT_SERVICES: {service.protocol}')
             if isinstance(service.host, (IPv4Address, IPv6Address)):
                 ip_addr = service.host
-                if (ip_addr.is_multicast or ip_addr.is_unspecified
-                        or (ip_addr.is_private and self.peer_announce)):
+                if (ip_addr.is_multicast or ip_addr.is_unspecified or
+                        (ip_addr.is_private and self.peer_announce)):
                     raise ServiceError(f'bad IP address for REPORT_SERVICES: {ip_addr}')
             elif service.host.lower() == 'localhost':
                 raise ServiceError(f'bad host for REPORT_SERVICES: {service.host}')

@@ -1,28 +1,29 @@
-# Copyright (c) 2016-2021, Neil Booth
 # Copyright (c) 2016-2017, the ElectrumX authors
 #
 # All rights reserved.
 #
-# This file is licensed under the Open BSV License version 3, see LICENCE for details.
+# See the file "LICENCE" for information about the copyright
+# and warranty status of this software.
 
 '''Backend database abstraction.'''
 
 import os
 from functools import partial
+from typing import Type
 
-from electrumx.lib import util
+import electrumx.lib.util as util
 
 
-def db_class(name):
+def db_class(name) -> Type['Storage']:
     '''Returns a DB engine class.'''
-    for db_class_ in util.subclasses(Storage):
-        if db_class_.__name__.lower() == name.lower():
-            db_class_.import_module()
-            return db_class_
-    raise RuntimeError('unrecognised DB engine "{}"'.format(name))
+    for db_class in util.subclasses(Storage):
+        if db_class.__name__.lower() == name.lower():
+            db_class.import_module()
+            return db_class
+    raise RuntimeError(f'unrecognised DB engine "{name}"')
 
 
-class Storage(object):
+class Storage:
     '''Abstract base class of the DB backend abstraction.'''
 
     def __init__(self, name, for_sync):
@@ -92,10 +93,6 @@ class LevelDB(Storage):
 class RocksDB(Storage):
     '''RocksDB database engine.'''
 
-    def __init__(self, *args):
-        self.db = None
-        super().__init__(*args)
-
     @classmethod
     def import_module(cls):
         import rocksdb
@@ -125,7 +122,7 @@ class RocksDB(Storage):
         return RocksDBIterator(self.db, prefix, reverse)
 
 
-class RocksDBWriteBatch(object):
+class RocksDBWriteBatch:
     '''A write batch for RocksDB.'''
 
     def __init__(self, db):
@@ -140,7 +137,7 @@ class RocksDBWriteBatch(object):
             self.db.write(self.batch)
 
 
-class RocksDBIterator(object):
+class RocksDBIterator:
     '''An iterator for RocksDB.'''
 
     def __init__(self, db, prefix, reverse):

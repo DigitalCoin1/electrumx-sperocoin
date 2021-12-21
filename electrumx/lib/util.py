@@ -1,13 +1,33 @@
-# Copyright (c) 2016-2021, Neil Booth
+# Copyright (c) 2016-2017, Neil Booth
 #
 # All rights reserved.
 #
-# This file is licensed under the Open BSV License version 3, see LICENCE for details.
+# The MIT License (MIT)
+#
+# Permission is hereby granted, free of charge, to any person obtaining
+# a copy of this software and associated documentation files (the
+# "Software"), to deal in the Software without restriction, including
+# without limitation the rights to use, copy, modify, merge, publish,
+# distribute, sublicense, and/or sell copies of the Software, and to
+# permit persons to whom the Software is furnished to do so, subject to
+# the following conditions:
+#
+# The above copyright notice and this permission notice shall be
+# included in all copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
+# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
+# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
+# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
+# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
+# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+# and warranty status of this software.
 
 '''Miscellaneous utility classes and functions.'''
 
 
-import array
+from array import array
 import inspect
 from ipaddress import ip_address
 import logging
@@ -15,6 +35,18 @@ import sys
 from collections.abc import Container, Mapping
 from struct import Struct
 
+
+# Use system-compiled JSON lib if available, fallback to stdlib
+try:
+    import rapidjson as json
+except ImportError:
+    try:
+        import ujson as json
+    except ImportError:
+        import json
+
+json_deserialize = json.loads
+json_serialize = json.dumps
 
 # Logging utilities
 
@@ -50,13 +82,12 @@ def class_logger(path, classname):
 # Method decorator.  To be used for calculations that will always
 # deliver the same result.  The method cannot take any arguments
 # and should be accessed as an attribute.
-class cachedproperty(object):
-
+class cachedproperty:
     def __init__(self, f):
         self.f = f
 
-    def __get__(self, obj, type_):
-        obj = obj or type_
+    def __get__(self, obj, type):
+        obj = obj or type
         value = self.f(obj)
         setattr(obj, self.f.__name__, value)
         return value
@@ -74,7 +105,7 @@ def formatted_time(t, sep=' '):
             parts.append(fmt.format(val))
         t %= n
     if len(parts) < 3:
-        parts.append('{:02d}s'.format(t))
+        parts.append(f'{t:02d}s')
     return sep.join(parts)
 
 
@@ -101,7 +132,7 @@ def deep_getsizeof(obj):
         r = sys.getsizeof(o)
         ids.add(id(o))
 
-        if isinstance(o, (str, bytes, bytearray, array.array)):
+        if isinstance(o, (str, bytes, bytearray, array)):
             return r
 
         if isinstance(o, Mapping):
@@ -118,8 +149,8 @@ def deep_getsizeof(obj):
 def subclasses(base_class, strict=True):
     '''Return a list of subclasses of base_class in its module.'''
     def select(obj):
-        return (inspect.isclass(obj) and issubclass(obj, base_class)
-                and (not strict or obj != base_class))
+        return (inspect.isclass(obj) and issubclass(obj, base_class) and
+                (not strict or obj != base_class))
 
     pairs = inspect.getmembers(sys.modules[base_class.__module__], select)
     return [pair[1] for pair in pairs]
@@ -152,18 +183,17 @@ def increment_byte_string(bs):
     '''Return the lexicographically next byte string of the same length.
 
     Return None if there is none (when the input is all 0xff bytes).'''
-    for n in range(1, len(bs) + 1):
-        if bs[-n] != 0xff:
-            return bs[:-n] + bytes([bs[-n] + 1]) + bytes(n - 1)
-    return None
+    try:
+        return (int.from_bytes(bs, 'big') + 1).to_bytes(len(bs), 'big')
+    except OverflowError:
+        return None
 
 
-class LogicalFile(object):
+class LogicalFile:
     '''A logical binary file split across several separate files on disk.'''
 
     def __init__(self, prefix, digits, file_size):
-        digit_fmt = '{' + ':0{:d}d'.format(digits) + '}'
-        self.filename_fmt = prefix + digit_fmt
+        self.filename_fmt = f'{prefix}{{:0{digits:d}d}}'
         self.file_size = file_size
 
     def read(self, start, size=-1):
@@ -224,7 +254,6 @@ def open_truncate(filename):
 
 def address_string(address):
     '''Return an address as a correctly formatted string.'''
-    fmt = '{}:{:d}'
     host, port = address
     try:
         host = ip_address(host)
@@ -232,8 +261,8 @@ def address_string(address):
         pass
     else:
         if host.version == 6:
-            fmt = '[{}]:{:d}'
-    return fmt.format(host, port)
+            return f'[{host}]:{port:d}'
+    return f'{host}:{port:d}'
 
 
 def protocol_tuple(s):
