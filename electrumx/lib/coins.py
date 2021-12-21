@@ -964,7 +964,7 @@ class SperoCoin(Coin):
     SHORTNAME = "SPERO"
     NET = "mainnet"
     GENESIS_HASH = ('000006f4925ed7b889f847f24621390d'
-                    '4943466f091c3254ca1bd8becc517f7b'
+                    '4943466f091c3254ca1bd8becc517f7b')
     PEERS = []
     DESERIALIZER = lib_tx.DeserializerTxTimeSegWit
     TX_COUNT = 1358833

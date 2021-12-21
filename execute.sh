@@ -15,18 +15,8 @@ export SSL_KEYFILE=/data/ssl/server.key
 export BANNER_FILE=/data/banner.txt
 export DONATION_ADDRESS=SceX2CJjpoAGruFFykMA4c6eNjPAwrTd6K
 
-export HOST=
-export SSL_HOST=0.0.0.0
-export SSL_PORT=50002
-
-export TCP_HOST=0.0.0.0
-export TCP_PORT=50001
-
-export RPC_HOST=0.0.0.0
-export RPC_PORT=8000
-
-export REPORT_SERVICES=tcp://0.0.0.0:50001,ssl://0.0.0.0:50002,rpc://0.0.0.0:8000
-export REPORT_HOST=electrumx.sperocoin.org
+export SERVICES=tcp://0.0.0.0:50001,ssl://0.0.0.0:50002,rpc://127.0.0.1:8000
+export REPORT_SERVICES=tcp://electrumx.sperocoin.org:50001,ssl://electrumx.sperocoin.org:50002
 
 ulimit -n 10000
 
