@@ -1,10 +1,9 @@
-# Copyright (c) 2016-2018, Neil Booth
+# Copyright (c) 2016-2021, Neil Booth
 # Copyright (c) 2017, the ElectrumX authors
 #
 # All rights reserved.
 #
-# See the file "LICENCE" for information about the copyright
-# and warranty status of this software.
+# This file is licensed under the Open BSV License version 3, see LICENCE for details.
 
 '''History by script hash (address).'''
 
@@ -13,23 +12,29 @@ import ast
 import bisect
 import time
 from collections import defaultdict
-from functools import partial
 
-import electrumx.lib.util as util
-from electrumx.lib.util import pack_be_uint16, unpack_be_uint16_from
+from electrumx.lib import util
+from electrumx.lib.util import (
+    pack_be_uint16, pack_le_uint64, unpack_be_uint16_from, unpack_le_uint64,
+)
 from electrumx.lib.hash import hash_to_hex_str, HASHX_LEN
 
 
 class History(object):
 
-    DB_VERSIONS = [0]
+    DB_VERSIONS = [0, 1]
 
     def __init__(self):
         self.logger = util.class_logger(__name__, self.__class__.__name__)
         # For history compaction
         self.max_hist_row_entries = 12500
-        self.unflushed = defaultdict(partial(array.array, 'I'))
+        self.unflushed = defaultdict(bytearray)
         self.unflushed_count = 0
+        self.flush_count = 0
+        self.comp_flush_count = -1
+        self.comp_cursor = -1
+        self.db_version = max(self.DB_VERSIONS)
+        self.upgrade_cursor = -1
         self.db = None
 
     def open_db(self, db_class, for_sync, utxo_flush_count, compacting):
@@ -57,17 +62,22 @@ class History(object):
             self.comp_flush_count = state.get('comp_flush_count', -1)
             self.comp_cursor = state.get('comp_cursor', -1)
             self.db_version = state.get('db_version', 0)
+            self.upgrade_cursor = state.get('upgrade_cursor', -1)
         else:
             self.flush_count = 0
             self.comp_flush_count = -1
             self.comp_cursor = -1
             self.db_version = max(self.DB_VERSIONS)
+            self.upgrade_cursor = -1
 
-        self.logger.info(f'history DB version: {self.db_version}')
         if self.db_version not in self.DB_VERSIONS:
-            msg = f'this software only handles DB versions {self.DB_VERSIONS}'
+            msg = (f'your history DB version is {self.db_version} but '
+                   f'this software only handles DB versions {self.DB_VERSIONS}')
             self.logger.error(msg)
             raise RuntimeError(msg)
+        if self.db_version != max(self.DB_VERSIONS):
+            self.upgrade_db()
+        self.logger.info(f'history DB version: {self.db_version}')
         self.logger.info(f'flush count: {self.flush_count:,d}')
 
     def clear_excess(self, utxo_flush_count):
@@ -80,7 +90,7 @@ class History(object):
                          'excess history flushes...')
 
         keys = []
-        for key, hist in self.db.iterator(prefix=b''):
+        for key, _hist in self.db.iterator(prefix=b''):
             flush_id, = unpack_be_uint16_from(key[-2:])
             if flush_id > utxo_flush_count:
                 keys.append(key)
@@ -102,6 +112,7 @@ class History(object):
             'comp_flush_count': self.comp_flush_count,
             'comp_cursor': self.comp_cursor,
             'db_version': self.db_version,
+            'upgrade_cursor': self.upgrade_cursor,
         }
         # History entries are not prefixed; the suffix \0\0 ensures we
         # look similar to other entries and aren't interfered with
@@ -111,20 +122,21 @@ class History(object):
         unflushed = self.unflushed
         count = 0
         for tx_num, hashXs in enumerate(hashXs_by_tx, start=first_tx_num):
+            tx_numb = pack_le_uint64(tx_num)[:5]
             hashXs = set(hashXs)
             for hashX in hashXs:
-                unflushed[hashX].append(tx_num)
+                unflushed[hashX].extend(tx_numb)
             count += len(hashXs)
         self.unflushed_count += count
 
     def unflushed_memsize(self):
-        return len(self.unflushed) * 180 + self.unflushed_count * 4
+        return len(self.unflushed) * 180 + self.unflushed_count * 5
 
     def assert_flushed(self):
         assert not self.unflushed
 
     def flush(self):
-        start_time = time.time()
+        start_time = time.monotonic()
         self.flush_count += 1
         flush_id = pack_be_uint16(self.flush_count)
         unflushed = self.unflushed
@@ -132,7 +144,7 @@ class History(object):
         with self.db.write_batch() as batch:
             for hashX in sorted(unflushed):
                 key = hashX + flush_id
-                batch.put(key, unflushed[hashX].tobytes())
+                batch.put(key, bytes(unflushed[hashX]))
             self.write_state(batch)
 
         count = len(unflushed)
@@ -140,7 +152,7 @@ class History(object):
         self.unflushed_count = 0
 
         if self.db.for_sync:
-            elapsed = time.time() - start_time
+            elapsed = time.monotonic() - start_time
             self.logger.info(f'flushed history in {elapsed:.1f}s '
                              f'for {count:,d} addrs')
 
@@ -149,19 +161,20 @@ class History(object):
         self.flush_count += 1
         nremoves = 0
         bisect_left = bisect.bisect_left
+        chunks = util.chunks
 
         with self.db.write_batch() as batch:
             for hashX in sorted(hashXs):
                 deletes = []
                 puts = {}
                 for key, hist in self.db.iterator(prefix=hashX, reverse=True):
-                    a = array.array('I')
-                    a.frombytes(hist)
+                    a = array.array('Q')
+                    a.frombytes(b''.join(item + bytes(3) for item in chunks(hist, 5)))
                     # Remove all history entries >= tx_count
                     idx = bisect_left(a, tx_count)
                     nremoves += len(a) - idx
                     if idx > 0:
-                        puts[key] = a[:idx].tobytes()
+                        puts[key] = hist[:5 * idx]
                         break
                     deletes.append(key)
 
@@ -179,12 +192,12 @@ class History(object):
         transactions.  By default yields at most 1000 entries.  Set
         limit to None to get them all.  '''
         limit = util.resolve_limit(limit)
-        for key, hist in self.db.iterator(prefix=hashX):
-            a = array.array('I')
-            a.frombytes(hist)
-            for tx_num in a:
+        chunks = util.chunks
+        for _key, hist in self.db.iterator(prefix=hashX):
+            for tx_numb in chunks(hist, 5):
                 if limit == 0:
                     return
+                tx_num, = unpack_le_uint64(tx_numb + bytes(3))
                 yield tx_num
                 limit -= 1
 
@@ -234,14 +247,14 @@ class History(object):
         # over rows of up to 50KB in size.  A fixed row size means
         # future compactions will not need to update the first N - 1
         # rows.
-        max_row_size = self.max_hist_row_entries * 4
+        max_row_size = self.max_hist_row_entries * 5
         full_hist = b''.join(hist_list)
         nrows = (len(full_hist) + max_row_size - 1) // max_row_size
         if nrows > 4:
             self.logger.info('hashX {} is large: {:,d} entries across '
                              '{:,d} rows'
                              .format(hash_to_hex_str(hashX),
-                                     len(full_hist) // 4, nrows))
+                                     len(full_hist) // 5, nrows))
 
         # Find what history needs to be written, and what keys need to
         # be deleted.  Start by assuming all keys are to be deleted,
@@ -249,6 +262,7 @@ class History(object):
         # compacted.
         write_size = 0
         keys_to_delete.update(hist_map)
+        n = 0   # In case of no loops
         for n, chunk in enumerate(util.chunks(full_hist, max_row_size)):
             key = hashX + pack_be_uint16(n)
             if hist_map.get(key) == chunk:
@@ -322,3 +336,46 @@ class History(object):
             self.logger.warning('cancelling in-progress history compaction')
             self.comp_flush_count = -1
             self.comp_cursor = -1
+
+    #
+    # DB upgrade
+    #
+
+    def upgrade_db(self):
+        self.logger.info(f'history DB version: {self.db_version}')
+        self.logger.info('Upgrading your history DB; this can take some time...')
+
+        def upgrade_cursor(cursor):
+            count = 0
+            prefix = pack_be_uint16(cursor)
+            key_len = HASHX_LEN + 2
+            chunks = util.chunks
+            with self.db.write_batch() as batch:
+                batch_put = batch.put
+                for key, hist in self.db.iterator(prefix=prefix):
+                    # Ignore non-history entries
+                    if len(key) != key_len:
+                        continue
+                    count += 1
+                    hist = b''.join(item + b'\0' for item in chunks(hist, 4))
+                    batch_put(key, hist)
+                self.upgrade_cursor = cursor
+                self.write_state(batch)
+            return count
+
+        last = time.monotonic()
+        count = 0
+
+        for cursor in range(self.upgrade_cursor + 1, 65536):
+            count += upgrade_cursor(cursor)
+            now = time.monotonic()
+            if now > last + 10:
+                last = now
+                self.logger.info(f'DB 3 of 3: {count:,d} entries updated, '
+                                 f'{cursor * 100 / 65536:.1f}% complete')
+
+        self.db_version = max(self.DB_VERSIONS)
+        self.upgrade_cursor = -1
+        with self.db.write_batch() as batch:
+            self.write_state(batch)
+        self.logger.info('DB 3 of 3 upgraded successfully')

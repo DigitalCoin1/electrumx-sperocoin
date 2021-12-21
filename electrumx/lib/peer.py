@@ -1,35 +1,16 @@
-# Copyright (c) 2017, Neil Booth
+# Copyright (c) 2017-2021, Neil Booth
 #
 # All rights reserved.
 #
-# The MIT License (MIT)
-#
-# Permission is hereby granted, free of charge, to any person obtaining
-# a copy of this software and associated documentation files (the
-# "Software"), to deal in the Software without restriction, including
-# without limitation the rights to use, copy, modify, merge, publish,
-# distribute, sublicense, and/or sell copies of the Software, and to
-# permit persons to whom the Software is furnished to do so, subject to
-# the following conditions:
-#
-# The above copyright notice and this permission notice shall be
-# included in all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+# This file is licensed under the Open BSV License version 3, see LICENCE for details.
 
 '''Representation of a peer server.'''
 
 from ipaddress import ip_address, IPv4Address, IPv6Address, IPv4Network, IPv6Network
 from socket import AF_INET, AF_INET6
 
-from electrumx.lib.util import cachedproperty
-import electrumx.lib.util as util
+from aiorpcx import is_valid_hostname
+from electrumx.lib.util import cachedproperty, protocol_tuple, version_string
 
 
 class Peer(object):
@@ -102,7 +83,7 @@ class Peer(object):
         '''Update features in-place.'''
         try:
             tmp = Peer(self.host, features)
-        except Exception:
+        except AssertionError:
             pass
         else:
             self.update_features_from_peer(tmp)
@@ -156,7 +137,7 @@ class Peer(object):
         if ip:
             return ((ip.is_global or ip.is_private)
                     and not (ip.is_multicast or ip.is_unspecified))
-        return util.is_valid_hostname(self.host)
+        return is_valid_hostname(self.host)
 
     @cachedproperty
     def is_public(self):
@@ -186,7 +167,7 @@ class Peer(object):
         if ip_addr.version == 4:
             return str(ip_addr)
         elif ip_addr.version == 6:
-            slash64 = IPv6Network(self.ip_addr).supernet(prefixlen_diff=128-64)
+            slash64 = IPv6Network(self.ip_addr).supernet(prefixlen_diff=128 - 64)
             return str(slash64)
         return ''
 
@@ -200,10 +181,10 @@ class Peer(object):
             return ''
         ip_addr = ip_address(self.ip_addr)
         if ip_addr.version == 4:
-            slash16 = IPv4Network(self.ip_addr).supernet(prefixlen_diff=32-16)
+            slash16 = IPv4Network(self.ip_addr).supernet(prefixlen_diff=32 - 16)
             return str(slash16)
         elif ip_addr.version == 6:
-            slash56 = IPv6Network(self.ip_addr).supernet(prefixlen_diff=128-56)
+            slash56 = IPv6Network(self.ip_addr).supernet(prefixlen_diff=128 - 56)
             return str(slash56)
         return ''
 
@@ -265,8 +246,8 @@ class Peer(object):
 
     def _protocol_version_string(self, key):
         version_str = self.features.get(key)
-        ptuple = util.protocol_tuple(version_str)
-        return util.version_string(ptuple)
+        ptuple = protocol_tuple(version_str)
+        return version_string(ptuple)
 
     @cachedproperty
     def protocol_min(self):

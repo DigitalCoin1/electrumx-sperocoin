@@ -1,37 +1,13 @@
-# Copyright (c) 2016-2017, Neil Booth
+# Copyright (c) 2016-2021, Neil Booth
 #
 # All rights reserved.
 #
-# The MIT License (MIT)
-#
-# Permission is hereby granted, free of charge, to any person obtaining
-# a copy of this software and associated documentation files (the
-# "Software"), to deal in the Software without restriction, including
-# without limitation the rights to use, copy, modify, merge, publish,
-# distribute, sublicense, and/or sell copies of the Software, and to
-# permit persons to whom the Software is furnished to do so, subject to
-# the following conditions:
-#
-# The above copyright notice and this permission notice shall be
-# included in all copies or substantial portions of the Software.
-#
-# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND,
-# EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF
-# MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND
-# NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE
-# LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
-# OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
-# WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
-# and warranty status of this software.
+# This file is licensed under the Open BSV License version 3, see LICENCE for details.
 
 '''Script-related classes and functions.'''
 
 
-import struct
-from collections import namedtuple
-
 from electrumx.lib.enum import Enumeration
-from electrumx.lib.hash import hash160
 from electrumx.lib.util import unpack_le_uint16_from, unpack_le_uint32_from, \
     pack_le_uint16, pack_le_uint32
 
@@ -78,6 +54,16 @@ assert OpCodes.OP_CHECKSIG == 0xac
 assert OpCodes.OP_CHECKMULTISIG == 0xae
 
 
+def is_unspendable_legacy(script):
+    # OP_FALSE OP_RETURN or OP_RETURN
+    return script[:2] == b'\x00\x6a' or (script and script[0] == 0x6a)
+
+
+def is_unspendable_genesis(script):
+    # OP_FALSE OP_RETURN
+    return script[:2] == b'\x00\x6a'
+
+
 def _match_ops(ops, pattern):
     if len(ops) != len(pattern):
         return False
@@ -101,38 +87,6 @@ class ScriptPubKey(object):
     TO_P2SH_OPS = [OpCodes.OP_HASH160, -1, OpCodes.OP_EQUAL]
     TO_PUBKEY_OPS = [-1, OpCodes.OP_CHECKSIG]
 
-    PayToHandlers = namedtuple('PayToHandlers', 'address script_hash pubkey '
-                               'unspendable strange')
-
-    @classmethod
-    def pay_to(cls, handlers, script):
-        '''Parse a script, invoke the appropriate handler and
-        return the result.
-
-        One of the following handlers is invoked:
-           handlers.address(hash160)
-           handlers.script_hash(hash160)
-           handlers.pubkey(pubkey)
-           handlers.unspendable()
-           handlers.strange(script)
-        '''
-        try:
-            ops = Script.get_ops(script)
-        except ScriptError:
-            return handlers.unspendable()
-
-        match = _match_ops
-
-        if match(ops, cls.TO_ADDRESS_OPS):
-            return handlers.address(ops[2][-1])
-        if match(ops, cls.TO_P2SH_OPS):
-            return handlers.script_hash(ops[1][-1])
-        if match(ops, cls.TO_PUBKEY_OPS):
-            return handlers.pubkey(ops[0][-1])
-        if ops and ops[0] == OpCodes.OP_RETURN:
-            return handlers.unspendable()
-        return handlers.strange(script)
-
     @classmethod
     def P2SH_script(cls, hash160):
         return (bytes([OpCodes.OP_HASH160])
@@ -144,37 +98,6 @@ class ScriptPubKey(object):
         return (bytes([OpCodes.OP_DUP, OpCodes.OP_HASH160])
                 + Script.push_data(hash160)
                 + bytes([OpCodes.OP_EQUALVERIFY, OpCodes.OP_CHECKSIG]))
-
-    @classmethod
-    def validate_pubkey(cls, pubkey, req_compressed=False):
-        if isinstance(pubkey, (bytes, bytearray)):
-            if len(pubkey) == 33 and pubkey[0] in (2, 3):
-                return  # Compressed
-            if len(pubkey) == 65 and pubkey[0] == 4:
-                if not req_compressed:
-                    return
-                raise PubKeyError('uncompressed pubkeys are invalid')
-        raise PubKeyError('invalid pubkey {}'.format(pubkey))
-
-    @classmethod
-    def pubkey_script(cls, pubkey):
-        cls.validate_pubkey(pubkey)
-        return Script.push_data(pubkey) + bytes([OpCodes.OP_CHECKSIG])
-
-    @classmethod
-    def multisig_script(cls, m, pubkeys):
-        '''Returns the script for a pay-to-multisig transaction.'''
-        n = len(pubkeys)
-        if not 1 <= m <= n <= 15:
-            raise ScriptError('{:d} of {:d} multisig script not possible'
-                              .format(m, n))
-        for pubkey in pubkeys:
-            cls.validate_pubkey(pubkey, req_compressed=True)
-        # See https://bitcoin.org/en/developer-guide
-        # 2 of 3 is: OP_2 pubkey1 pubkey2 pubkey3 OP_3 OP_CHECKMULTISIG
-        return (bytes([OP_1 + m - 1])
-                + b''.join(cls.push_data(pubkey) for pubkey in pubkeys)
-                + bytes([OP_1 + n - 1, OP_CHECK_MULTISIG]))
 
 
 class Script(object):
@@ -212,7 +135,7 @@ class Script(object):
         except Exception:
             # Truncated script; e.g. tx_hash
             # ebc9fa1196a59e192352d76c0f6e73167046b9d37b8302b6bb6968dfd279b767
-            raise ScriptError('truncated script')
+            raise ScriptError('truncated script') from None
 
         return ops
 

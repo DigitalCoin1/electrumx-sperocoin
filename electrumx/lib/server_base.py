@@ -1,9 +1,10 @@
-# Copyright (c) 2017, Neil Booth
+# Copyright (c) 2017-2021, Neil Booth
 #
 # All rights reserved.
 #
-# See the file "LICENCE" for information about the copyright
-# and warranty status of this software.
+# This file is licensed under the Open BSV License version 3, see LICENCE for details.
+
+'''Base class of servers'''
 
 import asyncio
 import os
@@ -15,12 +16,12 @@ import time
 from contextlib import suppress
 from functools import partial
 
-from aiorpcx import spawn, CancelledError
+from aiorpcx import spawn
 
 from electrumx.lib.util import class_logger
 
 
-class ServerBase(object):
+class ServerBase:
     '''Base class server implementation.
 
     Derived classes are expected to:
@@ -33,7 +34,7 @@ class ServerBase(object):
                                         'SSL error in data received|'
                                         'socket.send() raised exception')
     SUPPRESS_TASK_REGEX = re.compile('accept_connection2')
-    PYTHON_MIN_VERSION = (3, 6)
+    PYTHON_MIN_VERSION = (3, 8)
 
     def __init__(self, env):
         '''Save the environment, perform basic sanity checks, and set the
@@ -44,8 +45,10 @@ class ServerBase(object):
         asyncio.set_event_loop_policy(env.loop_policy)
 
         self.logger = class_logger(__name__, self.__class__.__name__)
-        self.logger.info(f'Python version: {sys.version}')
+        version_str = ' '.join(sys.version.splitlines())
+        self.logger.info(f'Python version: {version_str}')
         self.env = env
+        self.start_time = 0
 
         # Sanity checks
         if sys.version_info < self.PYTHON_MIN_VERSION:
@@ -67,7 +70,6 @@ class ServerBase(object):
 
         Setting the event also shuts down the server.
         '''
-        shutdown_event.set()
 
     def on_exception(self, loop, context):
         '''Suppress spurious messages it appears we cannot control.'''
@@ -78,7 +80,7 @@ class ServerBase(object):
             return
         loop.default_exception_handler(context)
 
-    async def _main(self, loop):
+    async def run(self):
         '''Run the server application:
 
         - record start time
@@ -88,36 +90,37 @@ class ServerBase(object):
         '''
         def on_signal(signame):
             shutdown_event.set()
-            self.logger.warning(f'received {signame} signal, '
-                                f'initiating shutdown')
+            self.logger.warning(f'received {signame} signal, initiating shutdown')
+
+        async def serve():
+            try:
+                await self.serve(shutdown_event)
+            finally:
+                shutdown_event.set()
 
         self.start_time = time.time()
-        if platform.system() == 'Windows':
-            pass  # No signals on Windows
-        else:
+        loop = asyncio.get_event_loop()
+        shutdown_event = asyncio.Event()
+
+        if platform.system() != 'Windows':
+            # No signals on Windows
             for signame in ('SIGINT', 'SIGTERM'):
                 loop.add_signal_handler(getattr(signal, signame),
                                         partial(on_signal, signame))
         loop.set_exception_handler(self.on_exception)
 
-        shutdown_event = asyncio.Event()
-        server_task = await spawn(self.serve(shutdown_event))
+        # Start serving and wait for shutdown, log receipt of the event
+        server_task = await spawn(serve, daemon=True)
+        try:
+            await shutdown_event.wait()
+        except KeyboardInterrupt:
+            self.logger.warning('received keyboard interrupt, initiating shutdown')
 
-        # Wait for shutdown, log on receipt of the event
-        await shutdown_event.wait()
         self.logger.info('shutting down')
 
         server_task.cancel()
-        with suppress(CancelledError):
-            await server_task
-        self.logger.info('shutdown complete')
-
-    def run(self):
-        loop = asyncio.get_event_loop()
         try:
-            loop.run_until_complete(self._main(loop))
-        except KeyboardInterrupt:
-            self.logger.info(f'received interrupt signal, '
-                             f'initiating shutdown')
+            with suppress(asyncio.CancelledError):
+                await server_task
         finally:
-            loop.run_until_complete(loop.shutdown_asyncgens())
+            self.logger.info('shutdown complete')

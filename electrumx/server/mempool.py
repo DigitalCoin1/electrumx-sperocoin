@@ -1,22 +1,21 @@
-# Copyright (c) 2016-2018, Neil Booth
+# Copyright (c) 2016-2021, Neil Booth
 #
 # All rights reserved.
 #
-# See the file "LICENCE" for information about the copyright
-# and warranty status of this software.
+# This file is licensed under the Open BSV License version 3, see LICENCE for details.
 
 '''Mempool handling.'''
 
 import itertools
 import time
 from abc import ABC, abstractmethod
-from asyncio import Lock
 from collections import defaultdict
 
 import attr
 from aiorpcx import TaskGroup, run_in_thread, sleep
 
 from electrumx.lib.hash import hash_to_hex_str, hex_str_to_hash
+from electrumx.lib.tx import read_tx
 from electrumx.lib.util import class_logger, chunks
 from electrumx.server.db import UTXO
 
@@ -108,60 +107,23 @@ class MemPool(object):
         self.logger = class_logger(__name__, self.__class__.__name__)
         self.txs = {}
         self.hashXs = defaultdict(set)  # None can be a key
-        self.cached_compact_histogram = []
         self.refresh_secs = refresh_secs
         self.log_status_secs = log_status_secs
-        # Prevents mempool refreshes during fee histogram calculation
-        self.lock = Lock()
 
     async def _logging(self, synchronized_event):
         '''Print regular logs of mempool stats.'''
         self.logger.info('beginning processing of daemon mempool.  '
                          'This can take some time...')
-        start = time.time()
+        start = time.monotonic()
         await synchronized_event.wait()
-        elapsed = time.time() - start
+        elapsed = time.monotonic() - start
         self.logger.info(f'synced in {elapsed:.2f}s')
         while True:
-            self.logger.info(f'{len(self.txs):,d} txs '
+            mempool_size = sum(tx.size for tx in self.txs.values()) / 1_000_000
+            self.logger.info(f'{len(self.txs):,d} txs {mempool_size:.2f} MB '
                              f'touching {len(self.hashXs):,d} addresses')
             await sleep(self.log_status_secs)
             await synchronized_event.wait()
-
-    async def _refresh_histogram(self, synchronized_event):
-        while True:
-            await synchronized_event.wait()
-            async with self.lock:
-                # Threaded as can be expensive
-                await run_in_thread(self._update_histogram, 100_000)
-            await sleep(self.coin.MEMPOOL_HISTOGRAM_REFRESH_SECS)
-
-    def _update_histogram(self, bin_size):
-        # Build a histogram by fee rate
-        histogram = defaultdict(int)
-        for tx in self.txs.values():
-            histogram[tx.fee // tx.size] += tx.size
-
-        # Now compact it.  For efficiency, get_fees returns a
-        # compact histogram with variable bin size.  The compact
-        # histogram is an array of (fee_rate, vsize) values.
-        # vsize_n is the cumulative virtual size of mempool
-        # transactions with a fee rate in the interval
-        # [rate_(n-1), rate_n)], and rate_(n-1) > rate_n.
-        # Intervals are chosen to create tranches containing at
-        # least 100kb of transactions
-        compact = []
-        cum_size = 0
-        r = 0   # ?
-        for fee_rate, size in sorted(histogram.items(), reverse=True):
-            cum_size += size
-            if cum_size + r > bin_size:
-                compact.append((fee_rate, cum_size))
-                r += cum_size - bin_size
-                cum_size = 0
-                bin_size *= 1.1
-        self.logger.info(f'compact fee histogram: {compact}')
-        self.cached_compact_histogram = compact
 
     def _accept_transactions(self, tx_map, utxo_map, touched):
         '''Accept transactions in tx_map to the mempool if all their inputs
@@ -176,7 +138,7 @@ class MemPool(object):
         deferred = {}
         unspent = set(utxo_map)
         # Try to find all prevouts so we can accept the TX
-        for hash, tx in tx_map.items():
+        for tx_hash, tx in tx_map.items():
             in_pairs = []
             try:
                 for prevout in tx.prevouts:
@@ -187,7 +149,7 @@ class MemPool(object):
                         utxo = txs[prev_hash].out_pairs[prev_index]
                     in_pairs.append(utxo)
             except KeyError:
-                deferred[hash] = tx
+                deferred[tx_hash] = tx
                 continue
 
             # Spend the prevouts
@@ -197,13 +159,13 @@ class MemPool(object):
             tx.in_pairs = tuple(in_pairs)
             # Avoid negative fees if dealing with generation-like transactions
             # because some in_parts would be missing
-            tx.fee = max(0, (sum(v for _, v in tx.in_pairs) -
-                             sum(v for _, v in tx.out_pairs)))
-            txs[hash] = tx
+            tx.fee = max(0, (sum(v for _, v in tx.in_pairs)
+                             - sum(v for _, v in tx.out_pairs)))
+            txs[tx_hash] = tx
 
-            for hashX, value in itertools.chain(tx.in_pairs, tx.out_pairs):
+            for hashX, _value in itertools.chain(tx.in_pairs, tx.out_pairs):
                 touched.add(hashX)
-                hashXs[hashX].add(hash)
+                hashXs[hashX].add(tx_hash)
 
         return deferred, {prevout: utxo_map[prevout] for prevout in unspent}
 
@@ -219,8 +181,7 @@ class MemPool(object):
                 continue
             hashes = set(hex_str_to_hash(hh) for hh in hex_hashes)
             try:
-                async with self.lock:
-                    await self._process_mempool(hashes, touched, height)
+                await self._process_mempool(hashes, touched, height)
             except DBSyncError:
                 # The UTXO DB is not at the same height as the
                 # mempool; wait and try again
@@ -258,8 +219,6 @@ class MemPool(object):
             for hashes in chunks(new_hashes, 200):
                 coro = self._fetch_and_accept(hashes, all_hashes, touched)
                 await group.spawn(coro)
-            if mempool_height != self.api.db_height():
-                raise DBSyncError
 
             tx_map = {}
             utxo_map = {}
@@ -286,15 +245,15 @@ class MemPool(object):
 
         def deserialize_txs():    # This function is pure
             to_hashX = self.coin.hashX_from_script
-            deserializer = self.coin.DESERIALIZER
+            read_tx_and_size = read_tx
 
             txs = {}
-            for hash, raw_tx in zip(hashes, raw_txs):
+            for tx_hash, raw_tx in zip(hashes, raw_txs):
                 # The daemon may have evicted the tx from its
                 # mempool or it may have gotten in a block
                 if not raw_tx:
                     continue
-                tx, tx_size = deserializer(raw_tx).read_tx_and_vsize()
+                tx, tx_size = read_tx_and_size(raw_tx, 0)
                 # Convert the inputs and outputs into (hashX, value) pairs
                 # Drop generation-like inputs from MemPoolTx.prevouts
                 txin_pairs = tuple((txin.prev_hash, txin.prev_idx)
@@ -302,8 +261,8 @@ class MemPool(object):
                                    if not txin.is_generation())
                 txout_pairs = tuple((to_hashX(txout.pk_script), txout.value)
                                     for txout in tx.outputs)
-                txs[hash] = MemPoolTx(txin_pairs, None, txout_pairs,
-                                      0, tx_size)
+                txs[tx_hash] = MemPoolTx(txin_pairs, None, txout_pairs,
+                                         0, tx_size)
             return txs
 
         # Thread this potentially slow operation so as not to block
@@ -330,8 +289,11 @@ class MemPool(object):
         '''Keep the mempool synchronized with the daemon.'''
         async with TaskGroup() as group:
             await group.spawn(self._refresh_hashes(synchronized_event))
-            await group.spawn(self._refresh_histogram(synchronized_event))
             await group.spawn(self._logging(synchronized_event))
+
+            async for task in group:
+                if not task.cancelled():
+                    task.result()
 
     async def balance_delta(self, hashX):
         '''Return the unconfirmed amount in the mempool for hashX.
@@ -340,15 +302,11 @@ class MemPool(object):
         '''
         value = 0
         if hashX in self.hashXs:
-            for hash in self.hashXs[hashX]:
-                tx = self.txs[hash]
+            for hash_ in self.hashXs[hashX]:
+                tx = self.txs[hash_]
                 value -= sum(v for h168, v in tx.in_pairs if h168 == hashX)
                 value += sum(v for h168, v in tx.out_pairs if h168 == hashX)
         return value
-
-    async def compact_fee_histogram(self):
-        '''Return a compact fee histogram of the current mempool.'''
-        return self.cached_compact_histogram
 
     async def potential_spends(self, hashX):
         '''Return a set of (prev_hash, prev_idx) pairs from mempool
