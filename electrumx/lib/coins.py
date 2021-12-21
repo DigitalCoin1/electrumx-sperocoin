@@ -168,7 +168,7 @@ class SperoCoin(Coin):
                     '4943466f091c3254ca1bd8becc517f7b')
     ESTIMATE_FEE = 0.0001
     RELAY_FEE = 0.0001
-    DESERIALIZER = lib_tx.DeserializerTxTime
+    #DESERIALIZER = lib_tx.DeserializerTxTime
     DAEMON = daemon.LegacyRPCDaemon
     TX_COUNT = 1358833
     TX_COUNT_HEIGHT = 1357809
@@ -186,8 +186,8 @@ class SperoCoin(Coin):
         Need to download `x13_hash` module
         Source code: https://github.com/MaruCoinOfficial/x13-hash
         '''
-        import x13_hash
-        return x13_hash.getPoWHash(header)
+        import sperocoin_x13_hash
+        return sperocoin_x13_hash.getPoWHash(header)
 
 class BitcoinTestnetMixin:
     SHORTNAME = "XTN"
