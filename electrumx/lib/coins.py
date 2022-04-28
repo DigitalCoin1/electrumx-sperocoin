@@ -976,6 +976,23 @@ class SperoCoin(Coin):
         import sperocoin_x13_hash
         return sperocoin_x13_hash.getPoWHash(header)
 
+class SperoCoinTestnet(Coin):
+    NAME = "SperoCoinTestnet"
+    SHORTNAME = "XPERO"
+    NET = "testnet"
+    GENESIS_HASH = ('000006f4925ed7b889f847f24621390d'
+                    '4943466f091c3254ca1bd8becc517f7b')
+    PEERS = []
+    DESERIALIZER = lib_tx.DeserializerTxTimeSegWit
+    TX_COUNT = 7310
+    TX_COUNT_HEIGHT = 13128
+    TX_PER_BLOCK = 2
+    @classmethod
+    def header_hash(cls, header):
+        '''Given a header return the hash.'''
+        import sperocoin_x13_hash
+        return sperocoin_x13_hash.getPoWHash(header)
+
 class Litecoin(Coin):
     NAME = "Litecoin"
     SHORTNAME = "LTC"
